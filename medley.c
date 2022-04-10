@@ -11,7 +11,8 @@
 // 1: Wrong user input
 // 2: Failed to allocate memory
 // 3: File not found
-// 4: File corruption in read
+// 4: Error or file corruption in read
+// 5: Error or file corruption in write
 
 // Aliases for primitive data types as described for MS RIFF standard
 typedef uint8_t  BYTE;
@@ -135,6 +136,14 @@ int main(int argc, char **argv)
         }
     }
 
+    // Open output file for writing
+    FILE *writefile = fopen(wflag, "w");
+    if (writefile == NULL)
+    {
+        printf("\033[0;31m[ERROR]\033[0m Could not write to file %s\n", wflag);
+        return 5;
+    }
+
     // Initialize playlist as head of track linked list
     Track *playlist = NULL;
     int track_count = 0;
@@ -215,9 +224,9 @@ int main(int argc, char **argv)
         // STATUS PRINT 1: ID and name
         printf("No %i - %s ", play->track_number, play->name);
 
-        // Open audiofile
-        FILE *audiofile = fopen(play->path, "r");
-        if (audiofile == NULL)
+        // Open readfile
+        FILE *readfile = fopen(play->path, "r");
+        if (readfile == NULL)
         {
             printf("\033[0;31m[ERROR]\033[0m Could not open file at %s\n", play->path);
             play = play->next;
@@ -230,27 +239,27 @@ int main(int argc, char **argv)
         // Check groupID for "RIFF"
         char groupID[5];
         groupID[4] = '\0';
-        fread(&groupID, sizeof(char), 4, audiofile);
+        fread(&groupID, sizeof(char), 4, readfile);
         if (strcmp(groupID, "RIFF\0") != 0)
         {
             printf("\033[0;33m[SKIPPED]\033[0m Only RIFF Files are supported\n");
-            fclose(audiofile);
+            fclose(readfile);
             play = play->next;
             continue;
         }
         // Get fileSize and store to Track (chunkSize = file length in bytes - 8)
         uint32_t fileSize;
-        fread(&fileSize, sizeof(uint32_t), 1, audiofile);
+        fread(&fileSize, sizeof(uint32_t), 1, readfile);
         play->fileSize = fileSize;
 
         // Check riffType for "WAVE"
         char riffType[5];
         riffType[4] = '\0';
-        fread(&riffType, sizeof(char), 4, audiofile);
+        fread(&riffType, sizeof(char), 4, readfile);
         if (strcmp(riffType, "WAVE\0") != 0)
         {
             printf("\033[0;33m[SKIPPED]\033[0m Only PCM Files are supported\n");
-            fclose(audiofile);
+            fclose(readfile);
             play = play->next;
             continue;
         }
@@ -264,7 +273,7 @@ int main(int argc, char **argv)
         do
         {
             // Check for reaching End Of File
-            if (feof(audiofile))
+            if (feof(readfile))
             {
                 printf("\033[0;33m[SKIPPED]\033[0m No audio data found, file corruption\n");
                 skipFlag = 1;
@@ -273,7 +282,7 @@ int main(int argc, char **argv)
 
             // Skip NUL characters (padding)
             char check;
-            fread(&check, sizeof(CHAR), 1, audiofile);
+            fread(&check, sizeof(CHAR), 1, readfile);
             if (check == 0)
             {
                 continue;
@@ -281,22 +290,22 @@ int main(int argc, char **argv)
             // Rewind last fread (1 char) and continue
             else
             {
-                fseek(audiofile, -1, SEEK_CUR);
+                fseek(readfile, -1, SEEK_CUR);
             }
 
             // Read chunkID (4 letter code + terminator)
             char ckID[5];
             ckID[4] = '\0';
-            fread(&ckID, sizeof(DWORD), 1, audiofile);
+            fread(&ckID, sizeof(DWORD), 1, readfile);
 
             // Read chunkSize
             DWORD ckSize;
-            fread(&ckSize, sizeof(DWORD), 1, audiofile);
+            fread(&ckSize, sizeof(DWORD), 1, readfile);
 
             // Read format chunk, mandatory first chunk after RIFF header
             if (strcmp(ckID, "fmt \0") == 0)
             {
-                fread(&play->fmt, sizeof(FmtChunk), 1, audiofile);
+                fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
                 if (play->fmt.wBitsPerSample == 32)
                 {
                     printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
@@ -316,11 +325,11 @@ int main(int argc, char **argv)
             else if (strcmp(ckID, "data\0") != 0)
             {
                 // Advance file pointer by chunkSize
-                fseek(audiofile, ckSize, SEEK_CUR);
+                fseek(readfile, ckSize, SEEK_CUR);
             }
             else
             {
-                // printf("Samples start at %lu\n", ftell(audiofile));
+                // printf("Samples start at %lu\n", ftell(readfile));
                 break;
             }
         } while (skipFlag == 0);
@@ -329,7 +338,7 @@ int main(int argc, char **argv)
         if (skipFlag == 1)
         {
             skipFlag = 0;
-            fclose(audiofile);
+            fclose(readfile);
             play = play->next;
             continue;
         }
@@ -339,6 +348,36 @@ int main(int argc, char **argv)
         {
             output->name = wflag;
             output->fmt = play->fmt;
+
+            // // Open output file for writing
+            // FILE *writefile = fopen(output->name, "w");
+            // if (writefile == NULL)
+            // {
+            //     printf("\033[0;31m[ERROR]\033[0m Could not write to file %s\n", output->name);
+            //     delete(playlist);
+            //     closedir (dir);
+            //     free(output);
+            //     return 5;
+            // }
+
+            // Write RIFF header (FFIRXXXXEVAW mtf) + XXXX (Subchunk Size)
+            DWORD riff_header [5] = {0x46464952, 0x0050C006, 0x45564157, 0x20746d66, 0x00000012}; 
+            fwrite(&riff_header, sizeof(riff_header), 1, writefile);
+
+            // Write Format Chunk
+            fwrite(&output->fmt, sizeof(FmtChunk), 1, writefile);
+
+            // Write Padding BYTE ???
+            WORD padding = 0x00000000;
+            fwrite(&padding, sizeof(WORD), 1, writefile);
+
+            // Write data chunk id
+            DWORD data_id = 0x61746164;
+            fwrite(&data_id, sizeof(DWORD), 1, writefile);
+
+            // Write data Chunk size
+            DWORD data_length [2] = {0x0050BFE0, 0x00000000};
+            fwrite(&data_length, sizeof(DWORD), 2, writefile);
         }
         // Check if all other tracks follow meta data of output track
         else if (output->fmt.nChannels != play->fmt.nChannels)
@@ -360,11 +399,18 @@ int main(int argc, char **argv)
             continue;
         }
 
-
         // Start reading samples here! XXX
+        BYTE *trans = malloc(sizeof(BYTE));
+        while(fread(trans, sizeof(BYTE), 1, readfile) > 0)
+        {
+            fwrite(trans, sizeof(BYTE), 1, writefile);
+        }
 
-        // Close audiofile
-        fclose(audiofile);
+        // TEST
+        return 99;
+
+        // Close readfile
+        fclose(readfile);
 
         // STATUS PRINT 2: Metadata
         printf("\033[0;32m(%hu Ch, %u Hz, %hu bit)\033[0m\n", play->fmt.nChannels, play->fmt.nSamplesPerSec, play->fmt.wBitsPerSample);
