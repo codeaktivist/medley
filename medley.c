@@ -187,6 +187,7 @@ int main(int argc, char **argv)
             // If the new track is the first track
             if (track_count == 1)
             {
+                // Set playlist as head of list
                 playlist = new;
             }
             else
@@ -201,6 +202,11 @@ int main(int argc, char **argv)
             }
         }
     }
+
+    // Create output track
+    Track *output = malloc(sizeof(Track));
+    // Set name to NULL as marker for unset
+    output->name = NULL;
 
     // Play (aka loop) playlist, start at track number 1
     Track *play = playlist;
@@ -291,6 +297,12 @@ int main(int argc, char **argv)
             if (strcmp(ckID, "fmt \0") == 0)
             {
                 fread(&play->fmt, sizeof(FmtChunk), 1, audiofile);
+                if (play->fmt.wBitsPerSample == 32)
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
+                    skipFlag = 1;
+                    continue;
+                }
             }
             // Explicitly reject RF64 BWF (encountered ds64 chunk)
             else if (strcmp(ckID, "ds64\0") == 0)
@@ -321,6 +333,34 @@ int main(int argc, char **argv)
             play = play->next;
             continue;
         }
+
+        // Copy meta data from first valid track (master) to output track
+        if (output->name == NULL)
+        {
+            output->name = wflag;
+            output->fmt = play->fmt;
+        }
+        // Check if all other tracks follow meta data of output track
+        else if (output->fmt.nChannels != play->fmt.nChannels)
+        {
+            printf("\033[0;33m[SKIPPED]\033[0m Channel count (%hu Ch) does not match output track (%hu Ch)\n", play->fmt.nChannels, output->fmt.nChannels);
+            play = play->next;
+            continue;
+        }
+        else if (output->fmt.nSamplesPerSec != play->fmt.nSamplesPerSec)
+        {
+            printf("\033[0;33m[SKIPPED]\033[0m Samplerate (%u Hz) does not match output track (%u Hz)\n", play->fmt.nSamplesPerSec, output->fmt.nSamplesPerSec);
+            play = play->next;
+            continue;
+        }
+        else if (output->fmt.wBitsPerSample != play->fmt.wBitsPerSample)
+        {
+            printf("\033[0;33m[SKIPPED]\033[0m Bit depth (%hu bit) does not match output track (%hu bit)\n", play->fmt.wBitsPerSample, output->fmt.wBitsPerSample);
+            play = play->next;
+            continue;
+        }
+
+
         // Start reading samples here! XXX
 
         // Close audiofile
@@ -339,6 +379,9 @@ int main(int argc, char **argv)
 
     // Close directory
     closedir (dir);
+
+    // Free output track
+    free(output);
 }
 
 
