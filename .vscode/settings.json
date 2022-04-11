@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
         "crossfade"
-    ]
+    ],
+    "files.associations": {
+        "getopt.h": "c"
+    }
 }
