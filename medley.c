@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 
 
@@ -68,6 +69,7 @@ typedef struct Track
     int track_number;       // Track number
     char *name;             // File name
     char *path;             // Full path incl. file name
+    struct Track *prev;      // Pointer to previous track
     struct Track *next;     // Pointer to next track
 }
 Track;
@@ -80,9 +82,19 @@ void delete(Track *track);
 
 
 // Global variables
-int sample_count;           // sample length of each track slice
+int sample_track;           // sample length of each track slice
+int sample_fade;            // sample length of crossfade
 int file_count = 0;         // audio files found in directory
 int track_count = 0;        // count of valid tracks added to playlist
+
+
+// Big endian encoded 4 character identifiers to check against
+const DWORD RIFF = 0x46464952;
+const DWORD WAVE = 0x45564157;
+const DWORD FMT  = 0x20746d66;
+const DWORD DATA = 0x61746164;
+const DWORD DS64 = 0x34367364;
+
 
 
 // ----------------------------------------------------------
@@ -159,7 +171,7 @@ int main(int argc, char **argv)
                 {
                     printf("\033[0;31m[ERROR]\033[0m Check your crossfade: -x (length in seconds)\nTo see the help page type ./medley -h\n\n");
                     return 1;
-                }                
+                }
                 break;
 
             case '?':
@@ -176,7 +188,7 @@ int main(int argc, char **argv)
 
 // ----------------------------------------------------------
 // T R A C K S   &   P L A Y L I S T
-// Initializing output track and input playlist 
+// Initializing output track and input playlist
 // ----------------------------------------------------------
 
 
@@ -192,7 +204,7 @@ int main(int argc, char **argv)
 
 
 // ----------------------------------------------------------
-// D I R E C T O R Y   S T R E A M
+// R E A D I N G   D I R E C T O R Y   ( P R E F L I G H T )
 // Reading directory to sorted singly linked list
 // ----------------------------------------------------------
 
@@ -214,7 +226,7 @@ int main(int argc, char **argv)
     {
         // Check for correct file extension: .wav, .wave, .bfw
         char *ext = strrchr(direntry->d_name, '.');
-        if (ext && (!strcmp(ext, ".wav") || !strcmp(ext, ".wave") || !strcmp(ext, ".bwf")))
+        if (ext && (!strcasecmp(ext, ".wav") || !strcasecmp(ext, ".wave") || !strcasecmp(ext, ".bwf")))
         {
             // Add track to playlist
             file_count++;
@@ -228,6 +240,7 @@ int main(int argc, char **argv)
             // Fill Track structure with data
             new->track_number = file_count;
             new->name = direntry->d_name;
+            new->prev = NULL;
             new->next = NULL;
 
             // Concat path
@@ -242,7 +255,14 @@ int main(int argc, char **argv)
             new->path = strcat(new->path, "\0");
 
 
-            // Adjust next pointer
+
+// ----------------------------------------------------------
+// S O R T I N G   D I R E C T O R Y
+// Platform independent sorting: 0->9->A->Z
+// ----------------------------------------------------------
+
+
+            // Adjust next and prev pointer
             if (file_count == 1)
             {
                 // If this is the first file, set playlist (head of list) to point to it, no next
@@ -250,13 +270,39 @@ int main(int argc, char **argv)
             }
             else
             {
-                // Set *track of previous track to this track [XXX Implemens sorting via strcomp]
-                Track *search = playlist;       // Search points to head of list (playlist)
-                while (search->next != NULL)    // (I will add any new track to the end of the playlist)
-                {                               // As long as the search track has a next track ...
-                    search = search->next;      // ... move the search pointer to the next
-                }                               // When done, search points to previous track
-                search->next = new;             // Set preview track next pointer to the new track
+                // Search pointer travels thru playlist
+                Track *search = playlist;
+                while (search != NULL)
+                {
+                    // Sort case-insensitive by name
+                    if (strcasecmp(new->name, search->name) < 0)
+                    {
+                        // Put new before search
+                        if (search->prev != NULL)
+                        {
+                            search->prev->next = new;
+                            new->prev = search->prev;
+                            search->prev = new;
+                            new->next = search;
+                        }
+                        // Put new to head of playlist
+                        else
+                        {
+                            playlist->prev = new;
+                            new->next = playlist;
+                            playlist = new;
+                        }
+                        break;
+                    }
+                    // Put new to end of playlist
+                    if (search->next == NULL)
+                    {
+                        search->next = new;
+                        new->prev = search;
+                        break;
+                    }
+                    search = search->next;
+                }
             }
         }
     }
@@ -265,178 +311,260 @@ int main(int argc, char **argv)
 
 // ----------------------------------------------------------
 // R E A D I N G   T R A C K S
-// Reading into the playlist, track by track, store to RAM
+// Adding tracks to playlist, track by track, store in RAM
 // ----------------------------------------------------------
+
+
+    // DEBUG
+    printf("\n\nORDER 1:\n");
+    Track *temp1 = playlist;
+    while (temp1 != NULL)
+    {
+        if (temp1->name != NULL)
+            printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
+        else
+            printf("No Name\n");
+        temp1 = temp1->next;
+    }
+    printf("\n\n");
 
 
     // Play (aka loop) playlist, start at track number 1
     Track *play = playlist;
+
+    // None valid files get removed from list
+    int skipFlag = 0;
+
     while (play != NULL)
-    {
-        // STATUS PRINT 1: ID and name
-        printf("No %i - %s ", play->track_number, play->name);
-
-        // Open readfile
+    {        
+        // Open file for reading
         FILE *readfile = fopen(play->path, "r");
-        if (readfile == NULL)
-        {
-            printf("\033[0;31m[ERROR]\033[0m Could not open file at %s\n", play->path);
-            play = play->next;
-            continue;
-        }
-
-        // Read and check file header
-        // http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/Docs/riffmci.pdf
-
-        fread(&play->riff, sizeof(RiffChunk), 1, readfile);
-        // Check groupID for "RIFF"
-        // char groupID[5];
-        // groupID[4] = '\0';
-        // fread(&groupID, sizeof(char), 4, readfile);
-        if (strcmp(play->riff.ckID, "RIFF\0") != 0)
-        {
-            printf("\033[0;33m[SKIPPED]\033[0m Only RIFF Files are supported\n");
-            fclose(readfile);
-            play = play->next;
-            continue;
-        }
-        // // Get fileSize and store to Track (chunkSize = file length in bytes - 8)
-        // uint32_t fileSize;
-        // fread(&fileSize, sizeof(uint32_t), 1, readfile);
-        // play->fileSize = fileSize;
-
-        // Check riffType for "WAVE"
-        // char riffType[5];
-        // riffType[4] = '\0';
-        // fread(&riffType, sizeof(char), 4, readfile);
-        if (strcmp(play->riff.riffType, "WAVE\0") != 0)
-        {
-            printf("\033[0;33m[SKIPPED]\033[0m Only PCM Files are supported\n");
-            fclose(readfile);
-            play = play->next;
-            continue;
-        }
-
-        // Keep reading chunks (ckID, chSize) from file to retrieve:
-        // 1. Format chunk (mandatory first chunk after RIFF header)
-        // 2. Data chunk, where the actual audio is stored
-        // Ignore and skip all other chunks, e.g. relevant for BWF (BEXT Chunk)
-        // Ignore and skip any padding zeros
-        int skipFlag = 0;
+        
+        // Helper loop for error handling (break on skipFlag)
         do
         {
-            // Check for reaching End Of File
-            if (feof(readfile))
+            // STATUS PRINT: ID and name
+            printf("No %i - %s ", play->track_number, play->name);
+
+            // Handle file write access error
+            if (readfile == NULL)
             {
-                printf("\033[0;33m[SKIPPED]\033[0m No audio data found, file corruption\n");
+                printf("\033[0;31m[ERROR]\033[0m Could not open file at %s\n", play->path);
                 skipFlag = 1;
-                continue;
-            }
-
-            // Skip NUL characters aka padding
-            // Read a single character (check) from file
-            char check;
-            fread(&check, sizeof(char), 1, readfile);
-            // Skip character if it is 0 (padding zero)
-            if (check == 0)
-            {
-                continue;
-            }
-            // Rewind last fread (1 char) and continue
-            else
-            {
-                fseek(readfile, -sizeof(char), SEEK_CUR);
-            }
-
-            // Read chunkID (4 letter code + manually add terminator for strcmp)
-            char ckID[5];
-            ckID[4] = '\0';
-            fread(&ckID, sizeof(DWORD), 1, readfile);
-
-            // Read chunkSize
-            DWORD ckSize;
-            fread(&ckSize, sizeof(DWORD), 1, readfile);
-
-            // Check if format chunk, mandatory first chunk after RIFF header
-            if (strcmp(ckID, "fmt \0") == 0)
-            {
-                // Rewind ckSize and ckId, than read entire fmt chunk
-                fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
-                fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
-
-                // Reject floating point wave files
-                if (play->fmt.wBitsPerSample == 32)
-                {
-                    printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
-                    skipFlag = 1;
-                    continue;
-                }
-
-                // Set fmt data to master if this is the first track
-                if (track_count == 0)
-                {
-                    
-                }
-                // Validate all other tracks against the master and reject if format does not match
-                else
-                {
-                    if (output->fmt.nChannels != play->fmt.nChannels)
-                    {
-                        printf("\033[0;33m[SKIPPED]\033[0m Channel count (%hu Ch) does not match output track (%hu Ch)\n", play->fmt.nChannels, output->fmt.nChannels);
-                    }
-                    else if (output->fmt.nSamplesPerSec != play->fmt.nSamplesPerSec)
-                    {
-                        printf("\033[0;33m[SKIPPED]\033[0m Samplerate (%u Hz) does not match output track (%u Hz)\n", play->fmt.nSamplesPerSec, output->fmt.nSamplesPerSec);
-                    }
-                    else if (output->fmt.wBitsPerSample != play->fmt.wBitsPerSample)
-                    {
-                        printf("\033[0;33m[SKIPPED]\033[0m Bit depth (%hu bit) does not match output track (%hu bit)\n", play->fmt.wBitsPerSample, output->fmt.wBitsPerSample);
-                    }
-                    skipFlag = 1;
-                    continue;
-                }
-            }
-            // Reject RF64 BWF (encountered ds64 chunk)
-            else if (strcmp(ckID, "ds64\0") == 0)
-            {
-                printf("\033[0;33m[SKIPPED]\033[0m RF64 BWF is not supported\n");
-                skipFlag = 1;
-                continue;
-            }
-            // Skip all other chunks
-            else if (strcmp(ckID, "data\0") != 0)
-            {
-                // Advance file pointer by chunkSize
-                fseek(readfile, ckSize, SEEK_CUR);
-            }
-            else
-            {
-                // date chunk found, leave chunk reading loop
                 break;
             }
-        } while (skipFlag == 0);
+
+            // Handle RIFF header
+            fread(&play->riff, sizeof(RiffChunk), 1, readfile);
+            if (play->riff.ckID != RIFF)
+            {
+                printf("\033[0;33m[SKIPPED]\033[0m Only RIFF Files are supported\n");
+                fclose(readfile);
+                skipFlag = 1;
+                break;
+            }
+
+            // Handle WAVE header
+            if (play->riff.riffType != WAVE)
+            {
+                printf("\033[0;33m[SKIPPED]\033[0m Only PCM Files are supported\n");
+                fclose(readfile);
+                skipFlag = 1;
+                break;
+            }
+
+            // Handle format chunk, mandatory first chunk after RIFF header
+            fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
+
+            // Move *readfile to end of Chunk
+            fseek(readfile, -sizeof(FmtChunk) + 2 * sizeof(DWORD) + play->fmt.ckSize, SEEK_CUR);
+
+            // Reject floating point wave files (for now) because of mantissa exponent handling
+            if (play->fmt.wBitsPerSample == 32)
+            {
+                printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
+                skipFlag = 1;
+                break;
+            }
+
+            // Reject surround wave files
+            if (play->fmt.nChannels > 2)
+            {
+                printf("\033[0;33m[SKIPPED]\033[0m Multichannel files are not supported\n");
+                skipFlag = 1;
+                break;
+            }
+
+            // Reject low-res, 8 bit and below (for now) because of amplitude range: 0 - 255 positive integer
+            if (play->fmt.wBitsPerSample <= 8)
+            {
+                printf("\033[0;33m[SKIPPED]\033[0m Low-res / 8-bit files are not supported\n");
+                skipFlag = 1;
+                break;
+            }
+
+            // Set fmt data to master if this is the first track
+            if (track_count == 0)
+            {
+                output->fmt = play->fmt;
+            }
+            // Validate all other tracks against the master and reject if format does not match
+            else
+            {
+                if (output->fmt.nChannels != play->fmt.nChannels)
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m Channel count (%hu Ch) does not match output track (%hu Ch)\n", play->fmt.nChannels, output->fmt.nChannels);
+                    skipFlag = 1;
+                    break;
+                }
+                else if (output->fmt.nSamplesPerSec != play->fmt.nSamplesPerSec)
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m Samplerate (%u Hz) does not match output track (%u Hz)\n", play->fmt.nSamplesPerSec, output->fmt.nSamplesPerSec);
+                    skipFlag = 1;
+                    break;
+                }
+                else if (output->fmt.wBitsPerSample != play->fmt.wBitsPerSample)
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m Bit depth (%hu bit) does not match output track (%hu bit)\n", play->fmt.wBitsPerSample, output->fmt.wBitsPerSample);
+                    skipFlag = 1;
+                    break;
+                }
+            }
 
 
-        // Skip track if flagged for skip
-        if (skipFlag == 1)
-        {
-            skipFlag = 0;
-            fclose(readfile);
-            play = play->next;
-            continue;
-        }
+
+// ----------------------------------------------------------
+// R E A D I N G   D A T A   C H U N K
+// Reading audio data from validated file
+// ----------------------------------------------------------
+
+
+            // Keep reading chunks (ckID, chSize) until data chunk is found
+            // Ignore and skip all other chunks, e.g. BEXT Chunk as in BWF
+            do
+            {
+                // Handle padding, skip NUL character(s)
+                char check_padding;
+                fread(&check_padding, sizeof(char), 1, readfile);
+                if (check_padding == 0) // Probe for NUL
+                {
+                    continue;
+                }
+                else    // Rewind last fread and continue if not NUL
+                {
+                    fseek(readfile, -sizeof(char), SEEK_CUR);
+                }
+
+                // Check for chunkID
+                DWORD check_Id;
+                fread(&check_Id, sizeof(DWORD), 1, readfile);
+
+                // Check for chunkSize
+                DWORD ckSize;
+                fread(&ckSize, sizeof(DWORD), 1, readfile);
+
+                // Handle data chunk
+                if (check_Id == DATA)
+                {
+                    fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
+                    fread(&play->data, sizeof(DataChunk), 1, readfile);
+                    track_count++;
+                    break;
+                }
+
+                // Reject RF64 BWF (encountered ds64 chunk)
+                if (check_Id == DS64)
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m RF64 BWF is not supported\n");
+                    skipFlag = 1;
+                    break;
+                }
+
+                // Check for reaching End Of File
+                if (feof(readfile))
+                {
+                    printf("\033[0;33m[SKIPPED]\033[0m No audio data found, file corruption\n");
+                    skipFlag = 1;
+                    break;
+                }
+
+                // Skip all other chunks
+                fseek(readfile, ckSize, SEEK_CUR);
+
+            } while (skipFlag == 0);
+
+            // Break healper loop on success
+            break;
+
+        } while (1);
 
         // Close readfile
         fclose(readfile);
 
-        // STATUS PRINT 2: Metadata
-        printf("\033[0;32m(%hu Ch, %u Hz, %hu bit)\033[0m\n", play->fmt.nChannels, play->fmt.nSamplesPerSec, play->fmt.wBitsPerSample);
 
-        // Move play pointer to next track
+
+// ----------------------------------------------------------
+// R E M O V E   I N V A L I D   F I L E S
+// Remove all flagged files from linked list
+// ----------------------------------------------------------
+
+
+        // Handle deletion from list
+        if (skipFlag == 1)
+        {
+            // Reset flag for next iteration
+            skipFlag = 0;
+
+            Track *delete = play;
+
+            // Remove from head of list (no previous)
+            if (play->prev == NULL)
+            {
+                playlist = play->next;
+                playlist->prev = NULL;
+            }
+            // Remove from end of list (no next)
+            else if (play->next == NULL)
+            {
+                play->prev->next = NULL;
+            }
+            // Remove from middle of list
+            else
+            {
+                play->next->prev = play->prev;
+                play->prev->next = play->next;
+            }
+
+            free(delete->path);
+            free(delete);
+        }
+        else
+        {
+            // STATUS PRINT: Success
+            printf("\033[0;32m(%hu Ch, %u Hz, %hu bit)\033[0m\n", play->fmt.nChannels, play->fmt.nSamplesPerSec, play->fmt.wBitsPerSample);
+        }
+
+        // Move play pointer to next track (after success)
         play = play->next;
     }
 
+    // DEBUG
+    printf("\n\nORDER 2:\n");
+    Track *temp2 = playlist;
+    while (temp2 != NULL)
+    {
+        if (temp2->name != NULL)
+        {
+            // printf("%sn", temp2->name);
+            printf("%s | next: %s | prev: %s\n", temp2->name, temp2->next == NULL?"NULL":temp2->next->name, temp2->prev == NULL?"NULL":temp2->prev->name);
+        }
+        else
+            printf("No Name\n");
+        temp2 = temp2->next;
+    }
+    printf("\n\n");
 
+    
 
 // ----------------------------------------------------------
 // O U T P U T
@@ -447,7 +575,6 @@ int main(int argc, char **argv)
     // Create RIFF chunk
     output->riff = playlist->riff;
     // output->riff.ckSize = FILESIZE - 8;
-
     // Create format chunk
     output->fmt = playlist->fmt;
     output->fmt.nAvgBytesPerSec = output->fmt.nSamplesPerSec * output->fmt.nChannels * output->fmt.wBitsPerSample / 8;
@@ -455,11 +582,11 @@ int main(int argc, char **argv)
 
     // Create data chunk
     output->data.ckID = playlist->data.ckID;
-    output->data.ckSize = output->fmt.nChannels * file_count * sample_count;
+    output->data.ckSize = output->fmt.nChannels * file_count * sample_track;
 
     // Copy meta data from first valid track (master) to output track
     output->name = wflag;
-    output->fmt = play->fmt;
+    output->fmt = playlist->fmt;
 
     // Open output file for writing
     FILE *writefile = fopen(wflag, "w");
@@ -469,12 +596,12 @@ int main(int argc, char **argv)
         return 5;
     }
 
-    // Start reading samples here! XXX
-    BYTE *trans = malloc(sizeof(BYTE));
-    while(fread(trans, sizeof(BYTE), 1, readfile) > 0)
-    {
-        fwrite(trans, sizeof(BYTE), 1, writefile);
-    }
+    // // Start reading samples here! XXX
+    // BYTE *trans = malloc(sizeof(BYTE));
+    // while(fread(trans, sizeof(BYTE), 1, readfile) > 0)
+    // {
+    //     fwrite(trans, sizeof(BYTE), 1, writefile);
+    // }
 
     // TEST
     return 99;
@@ -491,10 +618,10 @@ int main(int argc, char **argv)
     // }
 
     // Write RIFF header (FFIRXXXXEVAW mtf) + XXXX (Subchunk Size)
-    // DWORD riff_header [5] = {0x46464952, 0x0050C006, 0x45564157, 0x20746d66, 0x00000012}; 
+    // DWORD riff_header [5] = {0x46464952, 0x0050C006, 0x45564157, 0x20746d66, 0x00000012};
     // fwrite(&riff_header, sizeof(riff_header), 1, writefile);
 
-    char riff_header [] = {'R', 'I', 'F','F',0x06, 0xC0, 0x50,0x00,'W', 'A', 'V','E','f', 'm', 't','\0', 12, '\0', '\0', '\0'}; 
+    char riff_header [] = {'R', 'I', 'F','F',0x06, 0xC0, 0x50,0x00,'W', 'A', 'V','E','f', 'm', 't','\0', 12, '\0', '\0', '\0'};
     fwrite(&riff_header, sizeof(char), 20, writefile);
 
     // Write Format Chunk
@@ -583,5 +710,7 @@ void print_help()
 
 
 // Notes / ToDo
-// - structure code
-// - Implemens sorting via strcomp
+// - (DONE) structure code
+// - (DONE) Implemens sorting via strcomp
+// - (DONE) No I really need to check for padded 0's? Yes, Adobe adds padding :/
+// - Run without agrs to get input ... hmmm?
