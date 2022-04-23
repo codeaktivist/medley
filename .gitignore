@@ -59,11 +59,15 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-# Audio Files Folder
+# Audio Files and Folder
 audio/
+*.wav
+*.wave
+*.bwf
 
 # Ignore Temp Folder
 temp/
+.DS_Store
 
 # VS Code
 .vscode/

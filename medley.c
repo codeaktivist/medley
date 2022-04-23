@@ -1,5 +1,5 @@
 // ----------------------------------------------------------
-// m e l o d y   v 1 . 0 . 0 . 1
+// m e l o d y   v 1 . 0 . 0
 // martin.ulm@googlemail.com
 // ----------------------------------------------------------
 
@@ -23,10 +23,8 @@
 
 // Aliases for primitive data types as described for MS RIFF standard
 typedef uint8_t  BYTE;
-typedef uint8_t  CHAR;
 typedef uint16_t WORD;
 typedef uint32_t DWORD;
-typedef int32_t  LONG;
 
 
 // RIFF Chunk: File info
@@ -116,7 +114,7 @@ int main(int argc, char **argv)
 // ----------------------------------------------------------
 
 
-    // Define allowed command line flags
+    // Define allowed command line flags and default values
     int flag;
     char *flags = "hr:w:i:o:x:";
     char *rflag = "audio/";     // (r)ead source directory
@@ -315,18 +313,18 @@ int main(int argc, char **argv)
 // ----------------------------------------------------------
 
 
-    // DEBUG
-    printf("\n\nORDER 1:\n");
-    Track *temp1 = playlist;
-    while (temp1 != NULL)
-    {
-        if (temp1->name != NULL)
-            printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
-        else
-            printf("No Name\n");
-        temp1 = temp1->next;
-    }
-    printf("\n\n");
+    // // DEBUG
+    // printf("\n\nORDER 1:\n");
+    // Track *temp1 = playlist;
+    // while (temp1 != NULL)
+    // {
+    //     if (temp1->name != NULL)
+    //         printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
+    //     else
+    //         printf("No Name\n");
+    //     temp1 = temp1->next;
+    // }
+    // printf("\n\n");
 
 
     // Play (aka loop) playlist, start at track number 1
@@ -336,10 +334,10 @@ int main(int argc, char **argv)
     int skipFlag = 0;
 
     while (play != NULL)
-    {        
+    {
         // Open file for reading
         FILE *readfile = fopen(play->path, "r");
-        
+
         // Helper loop for error handling (break on skipFlag)
         do
         {
@@ -359,7 +357,6 @@ int main(int argc, char **argv)
             if (play->riff.ckID != RIFF)
             {
                 printf("\033[0;33m[SKIPPED]\033[0m Only RIFF Files are supported\n");
-                fclose(readfile);
                 skipFlag = 1;
                 break;
             }
@@ -368,7 +365,6 @@ int main(int argc, char **argv)
             if (play->riff.riffType != WAVE)
             {
                 printf("\033[0;33m[SKIPPED]\033[0m Only PCM Files are supported\n");
-                fclose(readfile);
                 skipFlag = 1;
                 break;
             }
@@ -548,23 +544,23 @@ int main(int argc, char **argv)
         play = play->next;
     }
 
-    // DEBUG
-    printf("\n\nORDER 2:\n");
-    Track *temp2 = playlist;
-    while (temp2 != NULL)
-    {
-        if (temp2->name != NULL)
-        {
-            // printf("%sn", temp2->name);
-            printf("%s | next: %s | prev: %s\n", temp2->name, temp2->next == NULL?"NULL":temp2->next->name, temp2->prev == NULL?"NULL":temp2->prev->name);
-        }
-        else
-            printf("No Name\n");
-        temp2 = temp2->next;
-    }
-    printf("\n\n");
+    // // DEBUG
+    // printf("\n\nORDER 2:\n");
+    // Track *temp2 = playlist;
+    // while (temp2 != NULL)
+    // {
+    //     if (temp2->name != NULL)
+    //     {
+    //         // printf("%sn", temp2->name);
+    //         printf("%s | next: %s | prev: %s\n", temp2->name, temp2->next == NULL?"NULL":temp2->next->name, temp2->prev == NULL?"NULL":temp2->prev->name);
+    //     }
+    //     else
+    //         printf("No Name\n");
+    //     temp2 = temp2->next;
+    // }
+    // printf("\n\n");
 
-    
+
 
 // ----------------------------------------------------------
 // O U T P U T
@@ -604,7 +600,7 @@ int main(int argc, char **argv)
     // }
 
     // TEST
-    return 99;
+    // return 99;
 
     // // Open output file for writing
     // FILE *writefile = fopen(output->name, "w");
@@ -621,24 +617,25 @@ int main(int argc, char **argv)
     // DWORD riff_header [5] = {0x46464952, 0x0050C006, 0x45564157, 0x20746d66, 0x00000012};
     // fwrite(&riff_header, sizeof(riff_header), 1, writefile);
 
-    char riff_header [] = {'R', 'I', 'F','F',0x06, 0xC0, 0x50,0x00,'W', 'A', 'V','E','f', 'm', 't','\0', 12, '\0', '\0', '\0'};
-    fwrite(&riff_header, sizeof(char), 20, writefile);
+    // char riff_header [] = {'R', 'I', 'F','F',0x06, 0xC0, 0x50,0x00,'W', 'A', 'V','E','f', 'm', 't','\0', 12, '\0', '\0', '\0'};
+    // fwrite(&riff_header, sizeof(char), 20, writefile);
 
-    // Write Format Chunk
-    fwrite(&output->fmt, sizeof(FmtChunk), 1, writefile);
+    // // Write Format Chunk
+    // fwrite(&output->fmt, sizeof(FmtChunk), 1, writefile);
 
-    // Write Padding BYTE ??? XXX
-    WORD padding = 0x00000000;
-    fwrite(&padding, sizeof(WORD), 1, writefile);
+    // // Write Padding BYTE ??? XXX
+    // WORD padding = 0x00000000;
+    // fwrite(&padding, sizeof(WORD), 1, writefile);
 
-    // Write data chunk id
-    DWORD data_id = 0x61746164;
-    fwrite(&data_id, sizeof(DWORD), 1, writefile);
+    // // Write data chunk id
+    // DWORD data_id = 0x61746164;
+    // fwrite(&data_id, sizeof(DWORD), 1, writefile);
 
-    // Write data Chunk size XXX
-    DWORD data_length [2] = {0x0050BFE0, 0x00000000};
-            fwrite(&data_length, sizeof(DWORD), 2, writefile);
+    // // Write data Chunk size XXX
+    // DWORD data_length [2] = {0x0050BFE0, 0x00000000};
+    //         fwrite(&data_length, sizeof(DWORD), 2, writefile);
 
+    fclose(writefile);
 
     // Free output track
     free(output);
