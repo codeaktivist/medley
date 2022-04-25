@@ -50,25 +50,43 @@ typedef struct FmtChunk
 } FmtChunk;
 
 
+// Custom structure: Sample (sized dynamically via flexible array member)
+typedef struct Sample
+{
+    BYTE dummy;             // Mandatory member other than flexible array member
+    int8_t sample [];       // One audio sample of flexible size: 1->8 bit, 2->16 bit, 3->24 bit
+} Sample;
+
+
+// Custom structure: Frame (one sample with dynamic number of channels)
+typedef struct Frame
+{
+    BYTE dummy;             // Mandatory member other than flexible array member
+    Sample channel [];      // Flexible number of channels, each holding a sample
+} Frame;
+
+
 // Data Chunk: Audio data
 typedef struct DataChunk
 {
     DWORD ckID;             // Chunk type identifier: "data"
     DWORD ckSize;           // Chunk size field: NumSamples * NumChannels * BitsPerSample/8
+    Frame frame [];         // Flexible size array holding all samples of all channels
 } DataChunk;
 
 
 // Store audio tracks in a linked list, like a playlist
 typedef struct Track
 {
+    int track_number;       // Track number
+    float duration;         // Track duration in seconds
+    char *name;             // File name
+    char *path;             // Full path incl. file name
+    struct Track *prev;     // Pointer to previous track
+    struct Track *next;     // Pointer to next track
     struct RiffChunk riff;  // RIFF Chunk, file info
     struct FmtChunk fmt;    // Format Chunk, meta data
     struct DataChunk data;  // Data Chunk, audio data
-    int track_number;       // Track number
-    char *name;             // File name
-    char *path;             // Full path incl. file name
-    struct Track *prev;      // Pointer to previous track
-    struct Track *next;     // Pointer to next track
 }
 Track;
 
@@ -80,8 +98,10 @@ void delete(Track *track);
 
 
 // Global variables
-int sample_track;           // sample length of each track slice
-int sample_fade;            // sample length of crossfade
+int samples_in;             // sample position of in mark
+int samples_out;            // sample position of out mark
+int samples_track;          // sample length of each track slice
+int samples_fade;           // sample length of crossfade
 int file_count = 0;         // audio files found in directory
 int track_count = 0;        // count of valid tracks added to playlist
 
@@ -119,9 +139,9 @@ int main(int argc, char **argv)
     char *flags = "hr:w:i:o:x:";
     char *rflag = "audio/";     // (r)ead source directory
     char *wflag = "medley.wav"; // (w)rite to output file
-    int  iflag = 10;            // (i)n-marker in seconds
-    int  oflag = 20;            // (o)ut-marker in seconds
-    int  xflag = 2;             // (x)fade duration in seconds
+    float  iflag = 10;            // (i)n-marker in seconds
+    float  oflag = 20;            // (o)ut-marker in seconds
+    float  xflag = 2;             // (x)fade duration in seconds
 
     // Get and check user provided flags
     while ((flag = getopt(argc, argv, flags)) != -1)
@@ -136,7 +156,7 @@ int main(int argc, char **argv)
                 rflag = optarg;
                 if (rflag[(strlen(rflag) - 1)] != '/')
                 {
-                    printf("\033[0;31m[ERROR]\033[0m Check your source directory: -r\nPath to source directory must end with '/'\nTo see the help page type ./medley -h\n\n");
+                    printf("\033[0;31m[ERROR]\033[0m Check your source directory: -r\nPath to source directory must end with '/'\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
@@ -149,7 +169,7 @@ int main(int argc, char **argv)
                 iflag = atoi(optarg);
                 if (iflag <= 0)
                 {
-                    printf("\033[0;31m[ERROR]\033[0m Check your in-marker: -i (start in seconds)\nTo see the help page type ./medley -h\n\n");
+                    printf("\033[0;31m[ERROR]\033[0m Check your in-marker: -i (start in seconds)\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
@@ -158,7 +178,7 @@ int main(int argc, char **argv)
                 oflag = atoi(optarg);
                 if (oflag <= 0)
                 {
-                    printf("\033[0;31m[ERROR]\033[0m Check your out-marker: -o (end in seconds)\nTo see the help page type ./medley -h\n\n");
+                    printf("\033[0;31m[ERROR]\033[0m Check your out-marker: -o (end in seconds)\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
@@ -167,20 +187,35 @@ int main(int argc, char **argv)
                 xflag = atoi(optarg);
                 if (oflag <= 0)
                 {
-                    printf("\033[0;31m[ERROR]\033[0m Check your crossfade: -x (length in seconds)\nTo see the help page type ./medley -h\n\n");
+                    printf("\033[0;31m[ERROR]\033[0m Check your crossfade: -x (length in seconds)\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
 
             case '?':
-                printf("\033[0;31m[ERROR]\033[0m Wrong command line arguments found\nTo see the help page type ./medley -h\n\n");
+                printf("\033[0;31m[ERROR]\033[0m Wrong command line arguments found\n\nTo see the help page type ./medley -h\n\n");
                 return 1;
 
             default:
-                printf("\033[0;31m[ERROR]\033[0m Wrong command line arguments found.\nTo see the help page type ./medley -h\n\n");
+                printf("\033[0;31m[ERROR]\033[0m Wrong command line arguments found.\n\nTo see the help page type ./medley -h\n\n");
                 return 1;
         }
     }
+
+    // Check in and out marker
+    if (iflag >= oflag)
+    {
+        printf("\033[0;31m[ERROR]\033[0m In marker (%.2f seconds) must be located before to out marker (%.2f seconds)\n\nTo see the help page type ./medley -h\n\n", iflag, oflag);
+        return 1;
+    }
+
+    // Check crossfade length
+    if (xflag > (oflag - iflag) / 2)
+    {
+        printf("\033[0;31m[ERROR]\033[0m Your crossfade (%.2f seconds) is too long for the specified duration of %.2f seconds\n\nTo see the help page type ./medley -h\n\n", xflag, oflag - iflag);
+        return 1;
+    }
+
 
 
 
@@ -196,6 +231,12 @@ int main(int argc, char **argv)
 
     // Initialize output track
     Track *output = malloc(sizeof(Track));
+    if (output == NULL)
+    {
+        printf("\033[0;31m[ERROR]\033[0m Couldn't allocate memory for output track\n\nAbort! Let Martin know about this\n\n");
+        return 2;
+    }
+
     // Set name to NULL as marker for unset
     output->name = NULL;
 
@@ -212,7 +253,7 @@ int main(int argc, char **argv)
     dir = opendir (rflag);
     if (dir == NULL)
     {
-        printf("\033[0;31m[ERROR]\033[0m Couldn't open the directory: %s\nTo see the help page type ./medley -h\n\n", rflag);
+        printf("\033[0;31m[ERROR]\033[0m Couldn't open the directory: %s\n\nTo see the help page type ./medley -h\n\n", rflag);
         return 1;
     }
 
@@ -229,14 +270,18 @@ int main(int argc, char **argv)
             // Add track to playlist
             file_count++;
             Track *new = malloc(sizeof(Track));
+            printf("\nSIZEOF Track: %lu\n", sizeof(Track));
+            printf("SIZEOF RIFF: %lu\n", sizeof(RiffChunk));
+            printf("SIZEOF FMT: %lu\n", sizeof(FmtChunk));
+            printf("SIZEOF DATA: %lu\n", sizeof(DataChunk));
+
             if (new == NULL)
             {
-                printf("\033[0;31m[ERROR]\033[0m Couldn't allocate memory for track number %i\nAbort! Let Martin know about this\n\n", file_count);
+                printf("\033[0;31m[ERROR]\033[0m Couldn't allocate memory for track number %i\n\nAbort! Let Martin know about this\n\n", file_count);
                 return 2;
             }
 
             // Fill Track structure with data
-            new->track_number = file_count;
             new->name = direntry->d_name;
             new->prev = NULL;
             new->next = NULL;
@@ -308,23 +353,40 @@ int main(int argc, char **argv)
 
 
 // ----------------------------------------------------------
+// N U M B E R I N G   T R A C K S
+// Applying Track numbers after sorting
+// ----------------------------------------------------------
+
+
+    int number = 1;
+    Track *search = playlist;
+    while (search != NULL)
+    {
+        search->track_number = number;
+        number++;
+        search = search->next;
+    }
+
+
+
+// ----------------------------------------------------------
 // R E A D I N G   T R A C K S
 // Adding tracks to playlist, track by track, store in RAM
 // ----------------------------------------------------------
 
 
-    // // DEBUG
-    // printf("\n\nORDER 1:\n");
-    // Track *temp1 = playlist;
-    // while (temp1 != NULL)
-    // {
-    //     if (temp1->name != NULL)
-    //         printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
-    //     else
-    //         printf("No Name\n");
-    //     temp1 = temp1->next;
-    // }
-    // printf("\n\n");
+    // DEBUG
+    printf("\n\nORDER 1:\n");
+    Track *temp1 = playlist;
+    while (temp1 != NULL)
+    {
+        if (temp1->name != NULL)
+            printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
+        else
+            printf("No Name\n");
+        temp1 = temp1->next;
+    }
+    printf("\n\n");
 
 
     // Play (aka loop) playlist, start at track number 1
@@ -369,74 +431,15 @@ int main(int argc, char **argv)
                 break;
             }
 
-            // Handle format chunk, mandatory first chunk after RIFF header
-            fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
-
-            // Move *readfile to end of Chunk
-            fseek(readfile, -sizeof(FmtChunk) + 2 * sizeof(DWORD) + play->fmt.ckSize, SEEK_CUR);
-
-            // Reject floating point wave files (for now) because of mantissa exponent handling
-            if (play->fmt.wBitsPerSample == 32)
-            {
-                printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
-                skipFlag = 1;
-                break;
-            }
-
-            // Reject surround wave files
-            if (play->fmt.nChannels > 2)
-            {
-                printf("\033[0;33m[SKIPPED]\033[0m Multichannel files are not supported\n");
-                skipFlag = 1;
-                break;
-            }
-
-            // Reject low-res, 8 bit and below (for now) because of amplitude range: 0 - 255 positive integer
-            if (play->fmt.wBitsPerSample <= 8)
-            {
-                printf("\033[0;33m[SKIPPED]\033[0m Low-res / 8-bit files are not supported\n");
-                skipFlag = 1;
-                break;
-            }
-
-            // Set fmt data to master if this is the first track
-            if (track_count == 0)
-            {
-                output->fmt = play->fmt;
-            }
-            // Validate all other tracks against the master and reject if format does not match
-            else
-            {
-                if (output->fmt.nChannels != play->fmt.nChannels)
-                {
-                    printf("\033[0;33m[SKIPPED]\033[0m Channel count (%hu Ch) does not match output track (%hu Ch)\n", play->fmt.nChannels, output->fmt.nChannels);
-                    skipFlag = 1;
-                    break;
-                }
-                else if (output->fmt.nSamplesPerSec != play->fmt.nSamplesPerSec)
-                {
-                    printf("\033[0;33m[SKIPPED]\033[0m Samplerate (%u Hz) does not match output track (%u Hz)\n", play->fmt.nSamplesPerSec, output->fmt.nSamplesPerSec);
-                    skipFlag = 1;
-                    break;
-                }
-                else if (output->fmt.wBitsPerSample != play->fmt.wBitsPerSample)
-                {
-                    printf("\033[0;33m[SKIPPED]\033[0m Bit depth (%hu bit) does not match output track (%hu bit)\n", play->fmt.wBitsPerSample, output->fmt.wBitsPerSample);
-                    skipFlag = 1;
-                    break;
-                }
-            }
-
 
 
 // ----------------------------------------------------------
-// R E A D I N G   D A T A   C H U N K
-// Reading audio data from validated file
+// R E A D I N G   C H U N K S
+// Read chunks (ckID, chSize) till fmt & data chunk is found
+// Ignore and skip all other chunks, e.g. BEXT chunk (BWF)
 // ----------------------------------------------------------
 
 
-            // Keep reading chunks (ckID, chSize) until data chunk is found
-            // Ignore and skip all other chunks, e.g. BEXT Chunk as in BWF
             do
             {
                 // Handle padding, skip NUL character(s)
@@ -459,11 +462,130 @@ int main(int argc, char **argv)
                 DWORD ckSize;
                 fread(&ckSize, sizeof(DWORD), 1, readfile);
 
-                // Handle data chunk
-                if (check_Id == DATA)
+// ----------------------------------------------------------
+// F O R M A T   C H U N K
+// ----------------------------------------------------------
+
+                if (check_Id == FMT)
                 {
                     fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
-                    fread(&play->data, sizeof(DataChunk), 1, readfile);
+                    fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
+
+                    // Move *readfile to end of Chunk
+                    fseek(readfile, -sizeof(FmtChunk) + 2 * sizeof(DWORD) + play->fmt.ckSize, SEEK_CUR);
+                    
+                    // Reject floating point wave files (for now) because of mantissa exponent handling
+                    if (play->fmt.wBitsPerSample == 32)
+                    {
+                        printf("\033[0;33m[SKIPPED]\033[0m 32 Bit floating point not supported\n");
+                        skipFlag = 1;
+                        break;
+                    }
+
+                    // Reject surround wave files
+                    if (play->fmt.nChannels > 2)
+                    {
+                        printf("\033[0;33m[SKIPPED]\033[0m Multichannel files are not supported\n");
+                        skipFlag = 1;
+                        break;
+                    }
+
+                    // Reject low-res, 8 bit and below (for now) because of amplitude range: 0 - 255 positive integer
+                    if (play->fmt.wBitsPerSample <= 8)
+                    {
+                        printf("\033[0;33m[SKIPPED]\033[0m Low-res / 8-bit files are not supported\n");
+                        skipFlag = 1;
+                        break;
+                    }
+
+                    // Set fmt data to master if this is the first track
+                    if (track_count == 0)
+                    {
+                        output->fmt = play->fmt;
+                    }
+                    // Validate all other tracks against the master and reject if format does not match
+                    else
+                    {
+                        if (output->fmt.nChannels != play->fmt.nChannels)
+                        {
+                            printf("\033[0;33m[SKIPPED]\033[0m Channel count (%hu Ch) does not match output track (%hu Ch)\n", play->fmt.nChannels, output->fmt.nChannels);
+                            skipFlag = 1;
+                            break;
+                        }
+                        else if (output->fmt.nSamplesPerSec != play->fmt.nSamplesPerSec)
+                        {
+                            printf("\033[0;33m[SKIPPED]\033[0m Samplerate (%u Hz) does not match output track (%u Hz)\n", play->fmt.nSamplesPerSec, output->fmt.nSamplesPerSec);
+                            skipFlag = 1;
+                            break;
+                        }
+                        else if (output->fmt.wBitsPerSample != play->fmt.wBitsPerSample)
+                        {
+                            printf("\033[0;33m[SKIPPED]\033[0m Bit depth (%hu bit) does not match output track (%hu bit)\n", play->fmt.wBitsPerSample, output->fmt.wBitsPerSample);
+                            skipFlag = 1;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
+// ----------------------------------------------------------
+// D A T A   C H U N K
+// ----------------------------------------------------------
+
+                if (check_Id == DATA)
+                {
+                    play->data.ckID = check_Id;
+                    play->data.ckSize = ckSize;
+                    // fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
+                    // fread(&play->data, sizeof(DataChunk), 1, readfile);
+
+                    // Calculate duration:
+                    play->duration = (float) play->data.ckSize * 8 / (play->fmt.nChannels * play->fmt.nSamplesPerSec * play->fmt.wBitsPerSample);
+
+                    if (play->duration < oflag)
+                    {
+                        printf("\033[0;33m[SKIPPED]\033[0m Track duration (%.2f seconds) too short for out marker (%.2f seconds)\n", play->duration, oflag);
+                        skipFlag = 1;
+                        break;
+                    }
+
+                    // Calculate globals as first valid track is found (i.e. valid fmt chunk and valid data chunk)
+                    if (track_count == 0)
+                    {
+                        samples_in = iflag * output->fmt.nSamplesPerSec;
+                        samples_out = oflag * output->fmt.nSamplesPerSec;
+                        samples_track = samples_out - samples_in;
+                        samples_fade = xflag * output->fmt.nSamplesPerSec;
+                    }
+
+                    // FF pointer to in marker
+                    fseek(readfile, samples_in * output->fmt.nChannels * output->fmt.wBitsPerSample / 8, SEEK_CUR);
+
+                    // Grow memory allocation of Track to hold samples (including dummy BYTE)
+                    Track *temp = realloc(play, sizeof(Track) + samples_track * (output->fmt.nBlockAlign + output->fmt.nChannels + 1));
+                    if (temp == NULL)
+                    {
+                        printf("\033[0;31m[ERROR]\033[0m Couldn't resize memory for input track %i\n\nAbort! Let Martin know about this\n\n", play->track_number);
+                        // XXX free memory before return
+                        return 2;
+                    }
+                    play = temp;
+
+
+                    // Read samples from file into structure
+                    int sampleCount = 0;
+                    while (sampleCount < samples_track)
+                    {
+                        for (int channelCount = 1; channelCount <= output->fmt.nChannels; channelCount++)
+                        {
+                            fread(&play->data.frame[sampleCount].channel[channelCount], output->fmt.wBitsPerSample / 8, 1, readfile);
+                            sampleCount++;
+                        }
+                    }
+
+
+                    printf("\nFrame count: %s\n", play->data.frame[0].channel[0].sample);
+
                     track_count++;
                     break;
                 }
@@ -489,7 +611,7 @@ int main(int argc, char **argv)
 
             } while (skipFlag == 0);
 
-            // Break healper loop on success
+            // Break helper loop on success
             break;
 
         } while (1);
@@ -513,8 +635,14 @@ int main(int argc, char **argv)
 
             Track *delete = play;
 
+            // Remove if only one track in list
+            if (play->next == NULL && play->prev == NULL)
+            {
+                playlist = NULL;
+            }
+
             // Remove from head of list (no previous)
-            if (play->prev == NULL)
+            else if (play->prev == NULL)
             {
                 playlist = play->next;
                 playlist->prev = NULL;
@@ -537,11 +665,21 @@ int main(int argc, char **argv)
         else
         {
             // STATUS PRINT: Success
-            printf("\033[0;32m(%hu Ch, %u Hz, %hu bit)\033[0m\n", play->fmt.nChannels, play->fmt.nSamplesPerSec, play->fmt.wBitsPerSample);
+            printf("\033[0;32m(%hu Ch, %u Hz, %hu bit, %.2f seconds)\033[0m\n", play->fmt.nChannels, play->fmt.nSamplesPerSec, play->fmt.wBitsPerSample, play->duration);
         }
 
         // Move play pointer to next track (after success)
         play = play->next;
+    }
+
+    // Handle corner case: No valid audio files
+    if (playlist == NULL)
+    {
+        printf("\033[0;31m[ERROR]\033[0m No valid audio files present at: %s\n\n", rflag);
+        free(output);
+        free(playlist);
+        closedir (dir);
+        return 3;
     }
 
     // // DEBUG
@@ -578,7 +716,7 @@ int main(int argc, char **argv)
 
     // Create data chunk
     output->data.ckID = playlist->data.ckID;
-    output->data.ckSize = output->fmt.nChannels * file_count * sample_track;
+    output->data.ckSize = output->fmt.nChannels * file_count * samples_track;
 
     // Copy meta data from first valid track (master) to output track
     output->name = wflag;
@@ -588,7 +726,7 @@ int main(int argc, char **argv)
     FILE *writefile = fopen(wflag, "w");
     if (writefile == NULL)
     {
-        printf("\033[0;31m[ERROR]\033[0m Could not write to file %s\n", wflag);
+        printf("\033[0;31m[ERROR]\033[0m Could not write to file %s\n\n", wflag);
         return 5;
     }
 

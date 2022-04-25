@@ -71,3 +71,7 @@ temp/
 
 # VS Code
 .vscode/
+
+# Unignore
+!makefile
+!LICENSE
