@@ -50,28 +50,11 @@ typedef struct FmtChunk
 } FmtChunk;
 
 
-// Custom structure: Sample (sized dynamically via flexible array member)
-typedef struct Sample
-{
-    BYTE dummy;             // Mandatory member other than flexible array member
-    int8_t sample [];       // One audio sample of flexible size: 1->8 bit, 2->16 bit, 3->24 bit
-} Sample;
-
-
-// Custom structure: Frame (one sample with dynamic number of channels)
-typedef struct Frame
-{
-    BYTE dummy;             // Mandatory member other than flexible array member
-    Sample channel [];      // Flexible number of channels, each holding a sample
-} Frame;
-
-
 // Data Chunk: Audio data
 typedef struct DataChunk
 {
     DWORD ckID;             // Chunk type identifier: "data"
     DWORD ckSize;           // Chunk size field: NumSamples * NumChannels * BitsPerSample/8
-    Frame frame [];         // Flexible size array holding all samples of all channels
 } DataChunk;
 
 
@@ -82,6 +65,7 @@ typedef struct Track
     float duration;         // Track duration in seconds
     char *name;             // File name
     char *path;             // Full path incl. file name
+    FILE *readfile;         // Pointer to file for read and copy
     struct Track *prev;     // Pointer to previous track
     struct Track *next;     // Pointer to next track
     struct RiffChunk riff;  // RIFF Chunk, file info
@@ -94,6 +78,7 @@ Track;
 // Prototypes
 void print_welcome();
 void print_help();
+void number_tracks(Track *playlist);
 void delete(Track *track);
 
 
@@ -205,7 +190,7 @@ int main(int argc, char **argv)
     // Check in and out marker
     if (iflag >= oflag)
     {
-        printf("\033[0;31m[ERROR]\033[0m In marker (%.2f seconds) must be located before to out marker (%.2f seconds)\n\nTo see the help page type ./medley -h\n\n", iflag, oflag);
+        printf("\033[0;31m[ERROR]\033[0m In marker (%.2f seconds) must be located before out marker (%.2f seconds)\n\nTo see the help page type ./medley -h\n\n", iflag, oflag);
         return 1;
     }
 
@@ -215,7 +200,6 @@ int main(int argc, char **argv)
         printf("\033[0;31m[ERROR]\033[0m Your crossfade (%.2f seconds) is too long for the specified duration of %.2f seconds\n\nTo see the help page type ./medley -h\n\n", xflag, oflag - iflag);
         return 1;
     }
-
 
 
 
@@ -236,9 +220,6 @@ int main(int argc, char **argv)
         printf("\033[0;31m[ERROR]\033[0m Couldn't allocate memory for output track\n\nAbort! Let Martin know about this\n\n");
         return 2;
     }
-
-    // Set name to NULL as marker for unset
-    output->name = NULL;
 
 
 
@@ -270,10 +251,6 @@ int main(int argc, char **argv)
             // Add track to playlist
             file_count++;
             Track *new = malloc(sizeof(Track));
-            printf("\nSIZEOF Track: %lu\n", sizeof(Track));
-            printf("SIZEOF RIFF: %lu\n", sizeof(RiffChunk));
-            printf("SIZEOF FMT: %lu\n", sizeof(FmtChunk));
-            printf("SIZEOF DATA: %lu\n", sizeof(DataChunk));
 
             if (new == NULL)
             {
@@ -350,22 +327,8 @@ int main(int argc, char **argv)
         }
     }
 
-
-
-// ----------------------------------------------------------
-// N U M B E R I N G   T R A C K S
-// Applying Track numbers after sorting
-// ----------------------------------------------------------
-
-
-    int number = 1;
-    Track *search = playlist;
-    while (search != NULL)
-    {
-        search->track_number = number;
-        number++;
-        search = search->next;
-    }
+    // Renumber tracks after sorting
+    number_tracks(playlist);
 
 
 
@@ -381,7 +344,7 @@ int main(int argc, char **argv)
     while (temp1 != NULL)
     {
         if (temp1->name != NULL)
-            printf("%s | next: %s | prev: %s\n", temp1->name, temp1->next == NULL?"NULL":temp1->next->name, temp1->prev == NULL?"NULL":temp1->prev->name);
+            printf("No %i: %s | prev: %s | next: %s\n", temp1->track_number, temp1->name, temp1->prev == NULL?"NULL":temp1->prev->name, temp1->next == NULL?"NULL":temp1->next->name);
         else
             printf("No Name\n");
         temp1 = temp1->next;
@@ -398,7 +361,7 @@ int main(int argc, char **argv)
     while (play != NULL)
     {
         // Open file for reading
-        FILE *readfile = fopen(play->path, "r");
+        play->readfile = fopen(play->path, "r");
 
         // Helper loop for error handling (break on skipFlag)
         do
@@ -407,7 +370,7 @@ int main(int argc, char **argv)
             printf("No %i - %s ", play->track_number, play->name);
 
             // Handle file write access error
-            if (readfile == NULL)
+            if (play->readfile == NULL)
             {
                 printf("\033[0;31m[ERROR]\033[0m Could not open file at %s\n", play->path);
                 skipFlag = 1;
@@ -415,7 +378,7 @@ int main(int argc, char **argv)
             }
 
             // Handle RIFF header
-            fread(&play->riff, sizeof(RiffChunk), 1, readfile);
+            fread(&play->riff, sizeof(RiffChunk), 1, play->readfile);
             if (play->riff.ckID != RIFF)
             {
                 printf("\033[0;33m[SKIPPED]\033[0m Only RIFF Files are supported\n");
@@ -444,23 +407,23 @@ int main(int argc, char **argv)
             {
                 // Handle padding, skip NUL character(s)
                 char check_padding;
-                fread(&check_padding, sizeof(char), 1, readfile);
+                fread(&check_padding, sizeof(char), 1, play->readfile);
                 if (check_padding == 0) // Probe for NUL
                 {
                     continue;
                 }
                 else    // Rewind last fread and continue if not NUL
                 {
-                    fseek(readfile, -sizeof(char), SEEK_CUR);
+                    fseek(play->readfile, -sizeof(char), SEEK_CUR);
                 }
 
                 // Check for chunkID
                 DWORD check_Id;
-                fread(&check_Id, sizeof(DWORD), 1, readfile);
+                fread(&check_Id, sizeof(DWORD), 1, play->readfile);
 
                 // Check for chunkSize
                 DWORD ckSize;
-                fread(&ckSize, sizeof(DWORD), 1, readfile);
+                fread(&ckSize, sizeof(DWORD), 1, play->readfile);
 
 // ----------------------------------------------------------
 // F O R M A T   C H U N K
@@ -468,11 +431,8 @@ int main(int argc, char **argv)
 
                 if (check_Id == FMT)
                 {
-                    fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
-                    fread(&play->fmt, sizeof(FmtChunk), 1, readfile);
-
-                    // Move *readfile to end of Chunk
-                    fseek(readfile, -sizeof(FmtChunk) + 2 * sizeof(DWORD) + play->fmt.ckSize, SEEK_CUR);
+                    fseek(play->readfile, -sizeof(DWORD) * 2, SEEK_CUR);
+                    fread(&play->fmt, sizeof(FmtChunk), 1, play->readfile);
                     
                     // Reject floating point wave files (for now) because of mantissa exponent handling
                     if (play->fmt.wBitsPerSample == 32)
@@ -525,6 +485,11 @@ int main(int argc, char **argv)
                             break;
                         }
                     }
+
+                    // Move *readfile to end of fmt chunk (skipping padding bytes if there are any)
+                    fseek(play->readfile, -sizeof(FmtChunk) + 2 * sizeof(DWORD) + play->fmt.ckSize, SEEK_CUR);
+
+                    // Continue to search for data chunk
                     continue;
                 }
 
@@ -536,10 +501,8 @@ int main(int argc, char **argv)
                 {
                     play->data.ckID = check_Id;
                     play->data.ckSize = ckSize;
-                    // fseek(readfile, -sizeof(DWORD) * 2, SEEK_CUR);
-                    // fread(&play->data, sizeof(DataChunk), 1, readfile);
 
-                    // Calculate duration:
+                    // Calculate duration in seconds
                     play->duration = (float) play->data.ckSize * 8 / (play->fmt.nChannels * play->fmt.nSamplesPerSec * play->fmt.wBitsPerSample);
 
                     if (play->duration < oflag)
@@ -559,32 +522,7 @@ int main(int argc, char **argv)
                     }
 
                     // FF pointer to in marker
-                    fseek(readfile, samples_in * output->fmt.nChannels * output->fmt.wBitsPerSample / 8, SEEK_CUR);
-
-                    // Grow memory allocation of Track to hold samples (including dummy BYTE)
-                    Track *temp = realloc(play, sizeof(Track) + samples_track * (output->fmt.nBlockAlign + output->fmt.nChannels + 1));
-                    if (temp == NULL)
-                    {
-                        printf("\033[0;31m[ERROR]\033[0m Couldn't resize memory for input track %i\n\nAbort! Let Martin know about this\n\n", play->track_number);
-                        // XXX free memory before return
-                        return 2;
-                    }
-                    play = temp;
-
-
-                    // Read samples from file into structure
-                    int sampleCount = 0;
-                    while (sampleCount < samples_track)
-                    {
-                        for (int channelCount = 1; channelCount <= output->fmt.nChannels; channelCount++)
-                        {
-                            fread(&play->data.frame[sampleCount].channel[channelCount], output->fmt.wBitsPerSample / 8, 1, readfile);
-                            sampleCount++;
-                        }
-                    }
-
-
-                    printf("\nFrame count: %s\n", play->data.frame[0].channel[0].sample);
+                    fseek(play->readfile, samples_in * output->fmt.nChannels * output->fmt.wBitsPerSample / 8, SEEK_CUR);
 
                     track_count++;
                     break;
@@ -599,7 +537,7 @@ int main(int argc, char **argv)
                 }
 
                 // Check for reaching End Of File
-                if (feof(readfile))
+                if (feof(play->readfile))
                 {
                     printf("\033[0;33m[SKIPPED]\033[0m No audio data found, file corruption\n");
                     skipFlag = 1;
@@ -607,17 +545,14 @@ int main(int argc, char **argv)
                 }
 
                 // Skip all other chunks
-                fseek(readfile, ckSize, SEEK_CUR);
+                fseek(play->readfile, ckSize, SEEK_CUR);
 
             } while (skipFlag == 0);
 
-            // Break helper loop on success
+            // Break helper loop when track is valid
             break;
 
         } while (1);
-
-        // Close readfile
-        fclose(readfile);
 
 
 
@@ -659,6 +594,10 @@ int main(int argc, char **argv)
                 play->prev->next = play->next;
             }
 
+            // Close readfile
+            fclose(play->readfile);
+
+            // Free memory
             free(delete->path);
             free(delete);
         }
@@ -672,31 +611,32 @@ int main(int argc, char **argv)
         play = play->next;
     }
 
-    // Handle corner case: No valid audio files
+    // Handle corner case: No valid audio files found
     if (playlist == NULL)
     {
         printf("\033[0;31m[ERROR]\033[0m No valid audio files present at: %s\n\n", rflag);
         free(output);
-        free(playlist);
         closedir (dir);
         return 3;
     }
 
-    // // DEBUG
-    // printf("\n\nORDER 2:\n");
-    // Track *temp2 = playlist;
-    // while (temp2 != NULL)
-    // {
-    //     if (temp2->name != NULL)
-    //     {
-    //         // printf("%sn", temp2->name);
-    //         printf("%s | next: %s | prev: %s\n", temp2->name, temp2->next == NULL?"NULL":temp2->next->name, temp2->prev == NULL?"NULL":temp2->prev->name);
-    //     }
-    //     else
-    //         printf("No Name\n");
-    //     temp2 = temp2->next;
-    // }
-    // printf("\n\n");
+    number_tracks(playlist);
+
+    // DEBUG
+    printf("\n\nORDER 2:\n");
+    Track *temp2 = playlist;
+    while (temp2 != NULL)
+    {
+        if (temp2->name != NULL)
+        {
+            // printf("%sn", temp2->name);
+            printf("No %i: %s | prev: %s | next: %s\n", temp2->track_number, temp2->name, temp2->prev == NULL?"NULL":temp2->prev->name, temp2->next == NULL?"NULL":temp2->next->name);
+        }
+        else
+            printf("No Name\n");
+        temp2 = temp2->next;
+    }
+    printf("\n\n");
 
 
 
@@ -706,33 +646,69 @@ int main(int argc, char **argv)
 // ----------------------------------------------------------
 
 
-    // Create RIFF chunk
-    output->riff = playlist->riff;
-    // output->riff.ckSize = FILESIZE - 8;
-    // Create format chunk
-    output->fmt = playlist->fmt;
-    output->fmt.nAvgBytesPerSec = output->fmt.nSamplesPerSec * output->fmt.nChannels * output->fmt.wBitsPerSample / 8;
-    output->fmt.nBlockAlign = output->fmt.nChannels * output->fmt.wBitsPerSample / 8;
-
-    // Create data chunk
-    output->data.ckID = playlist->data.ckID;
-    output->data.ckSize = output->fmt.nChannels * file_count * samples_track;
-
-    // Copy meta data from first valid track (master) to output track
+    // Set name (optional)
     output->name = wflag;
-    output->fmt = playlist->fmt;
 
-    // Open output file for writing
-    FILE *writefile = fopen(wflag, "w");
-    if (writefile == NULL)
+    // Data chunk: Set Id
+    output->data.ckID = DATA;
+
+    // Data chunk: Calculate raw audio size -> samples out = n * length - (n - 1) * fade
+    output->data.ckSize = (track_count * samples_track - (track_count - 1) * samples_fade) * output->fmt.nBlockAlign;
+
+    // RIFF chunk: Copy from Playlist
+    output->riff = playlist->riff;
+
+    // RIFF chunk: Calculate filesize -> raw audio + data header (8) + fmt chunk (24)
+    output->riff.ckSize = output->fmt.ckSize + 8 + 24;
+
+    // Format chunk: Set size to 16 Bytes (standard wave header)
+    output->fmt.ckSize = 16;
+
+    // Open Output file for writing
+    output->readfile = fopen(output->name, "w");
+    if (output->readfile == NULL)
     {
-        printf("\033[0;31m[ERROR]\033[0m Could not write to file %s\n\n", wflag);
+        printf("\033[0;31m[ERROR]\033[0m Could not write to file: %s\n\n", wflag);
         return 5;
     }
 
+    // Write RIFF chunk
+    fwrite(&output->riff, sizeof(RiffChunk), 1, output->readfile);
+
+    // Write format chunk
+    fwrite(&output->fmt, sizeof(FmtChunk), 1, output->readfile);
+
+    // Write data chunk header
+    fwrite(&output->data, sizeof(DataChunk), 1, output->readfile);
+
+    // Write raw audio from playlist
+    Track *write = playlist;
+    while (write != NULL)
+    {
+        for (int i = 0; i < samples_track; i++)
+        {
+            
+        }
+        write = write->next;
+    }
+
+
+
+                    // Read samples from file into structure
+                    // int sampleCount = 0;
+                    // while (sampleCount < samples_track)
+                    // {
+                    //     for (int channelCount = 1; channelCount <= output->fmt.nChannels; channelCount++)
+                    //     {
+                    //         fread(&play->data.frame[sampleCount].channel[channelCount], output->fmt.wBitsPerSample / 8, 1, play->readfile);
+                    //         sampleCount++;
+                    //     }
+                    // }
+
+
     // // Start reading samples here! XXX
     // BYTE *trans = malloc(sizeof(BYTE));
-    // while(fread(trans, sizeof(BYTE), 1, readfile) > 0)
+    // while(fread(trans, sizeof(BYTE), 1, play->readfile) > 0)
     // {
     //     fwrite(trans, sizeof(BYTE), 1, writefile);
     // }
@@ -751,29 +727,7 @@ int main(int argc, char **argv)
     //     return 5;
     // }
 
-    // Write RIFF header (FFIRXXXXEVAW mtf) + XXXX (Subchunk Size)
-    // DWORD riff_header [5] = {0x46464952, 0x0050C006, 0x45564157, 0x20746d66, 0x00000012};
-    // fwrite(&riff_header, sizeof(riff_header), 1, writefile);
-
-    // char riff_header [] = {'R', 'I', 'F','F',0x06, 0xC0, 0x50,0x00,'W', 'A', 'V','E','f', 'm', 't','\0', 12, '\0', '\0', '\0'};
-    // fwrite(&riff_header, sizeof(char), 20, writefile);
-
-    // // Write Format Chunk
-    // fwrite(&output->fmt, sizeof(FmtChunk), 1, writefile);
-
-    // // Write Padding BYTE ??? XXX
-    // WORD padding = 0x00000000;
-    // fwrite(&padding, sizeof(WORD), 1, writefile);
-
-    // // Write data chunk id
-    // DWORD data_id = 0x61746164;
-    // fwrite(&data_id, sizeof(DWORD), 1, writefile);
-
-    // // Write data Chunk size XXX
-    // DWORD data_length [2] = {0x0050BFE0, 0x00000000};
-    //         fwrite(&data_length, sizeof(DWORD), 2, writefile);
-
-    fclose(writefile);
+    fclose(output->readfile);
 
     // Free output track
     free(output);
@@ -793,23 +747,6 @@ int main(int argc, char **argv)
 // ----------------------------------------------------------
 
 
-// Delete track from playlist
-void delete(Track *track)
-{
-    // Recursive call if this is not the last track
-    if (track->next != NULL)
-    {
-        delete(track->next);
-    }
-
-    // Free the malloc'ed path string
-    free(track->path);
-
-    // Free the Track struct
-    free(track);
-}
-
-
 // Print welcome message
 void print_welcome()
 {
@@ -826,6 +763,40 @@ void print_help()
 {
     printf("This is the help\n");
     return;
+}
+
+
+// Delete track from playlist
+void delete(Track *track)
+{
+    // Recursive call if this is not the last track
+    if (track->next != NULL)
+    {
+        delete(track->next);
+    }
+
+    // Close readfile
+    fclose(track->readfile);
+
+    // Free the malloc'ed path string
+    free(track->path);
+
+    // Free the Track struct
+    free(track);
+}
+
+
+// Number tracks in playlist (ascending)
+void number_tracks(Track *playlist)
+{
+    int number = 1;
+    Track *search = playlist;
+    while (search != NULL)
+    {
+        search->track_number = number;
+        number++;
+        search = search->next;
+    }
 }
 
 
