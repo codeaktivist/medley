@@ -64,9 +64,10 @@ audio/
 *.wav
 *.wave
 *.bwf
+*.pkf
 
 # Ignore Temp Folder
-temp/
+test/
 .DS_Store
 
 # VS Code
