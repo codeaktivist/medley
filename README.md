@@ -31,7 +31,7 @@ To perform audio edits and output your medley, the program takes the following p
 - the **location** of the folder containing the audio files
 - name of the outputted **file**, not including the file type .wav
 - **in-marker** in seconds from the beginning of the track
-- **out-marker** in seconds from the beginning of the track
+- **duration** in seconds from the beginning of the track
 - the length of the **crossfade** between each of the tracks
 
 ### Parameters and defaults
@@ -43,19 +43,19 @@ Parameters are optional. If not specified via the respective flag, default value
 | location | -r | audio | **r**ead source directory |
 |file|-w|medley.wav|**w**rite to output file|
 |in|-i|10|**i**n-marker in seconds|
-|out|-o|20|**o**ut-marker in seconds|
+|dur|-o|20|**d**uration in seconds|
 |x-fade|-x|2|**x**fade duration in seconds|
 
 ### Examples
 
-```./medley /beatles -f beatles.wav -i 40 -o 50 -x 1```
+```./medley /beatles -f beatles.wav -i 40 -d 10 -x 1```
 Take all wav files in the folder beatles and create the medley beatles.wav with 10 Seconds (0:40 to 0:50) for each song using 1 second to blend between them.
 
-```./medley /slipknot -i 0 -o 10 -c 0```
+```./medley /slipknot -i 0 -d 10 -x 0```
 
 Take any .wav file in the slipknot folder and generate a medley.wav made up of the first 10 seconds of every song.
 
-```./medley /coldplay -f elevator.wav -i 40 -o 60 -c 10```
+```./medley /coldplay -f elevator.wav -i 40 -d 20 -x 10```
 
 Produce some everblending elevator music ;P
 

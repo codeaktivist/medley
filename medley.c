@@ -12,6 +12,7 @@
 #include <string.h>
 #include <strings.h>
 #include <stdint.h>
+#include <math.h>
 
 
 
@@ -62,11 +63,11 @@ typedef struct DataChunk
 typedef struct Track
 {
     int track_number;       // Track number
-    int sample_count;       // Sample position within selection
+    long sample_count;      // Pointer position within audio data
     float duration;         // Track duration in seconds
     char *name;             // File name
     char *path;             // Full path incl. file name
-    FILE *audiofile;         // Pointer to file for read and copy
+    FILE *audiofile;        // Pointer to file for read and copy
     struct Track *prev;     // Pointer to previous track
     struct Track *next;     // Pointer to next track
     struct RiffChunk riff;  // RIFF Chunk, file info
@@ -81,13 +82,13 @@ void print_welcome();
 void print_help();
 void number_tracks(Track *playlist);
 void delete(Track *track);
+void print_order(Track *playlist);
 
 
 // Global variables
-int samples_in;             // sample position of in mark
-int samples_out;            // sample position of out mark
-int samples_track;          // sample length of each track slice
-int samples_fade;           // sample length of crossfade
+long samples_in;            // sample position of in mark
+long samples_part;          // sample length of each track slice
+long samples_fade;          // sample length of crossfade
 int file_count = 0;         // audio files found in directory
 int track_count = 0;        // count of valid tracks added to playlist
 
@@ -122,11 +123,11 @@ int main(int argc, char **argv)
 
     // Define allowed command line flags and default values
     int flag;
-    char *flags = "hr:w:i:o:x:";
+    char *flags = "hr:w:i:d:x:";
     char *rflag = "audio/";     // (r)ead source directory
     char *wflag = "medley.wav"; // (w)rite to output file
     float  iflag = 2;           // (i)n-marker in seconds
-    float  oflag = 5;           // (o)ut-marker in seconds
+    float  dflag = 2;           // (d)uration of track in seconds
     float  xflag = 1;           // (x)fade duration in seconds
 
     // Get and check user provided flags
@@ -153,18 +154,18 @@ int main(int argc, char **argv)
 
             case 'i':
                 iflag = atof(optarg);
-                if (iflag <= 0)
+                if (iflag < 0)
                 {
                     printf("\033[0;31m[ERROR]\033[0m Check your in-marker: -i (start in seconds)\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
 
-            case 'o':
-                oflag = atof(optarg);
-                if (oflag <= 0)
+            case 'd':
+                dflag = atof(optarg);
+                if (dflag <= 0)
                 {
-                    printf("\033[0;31m[ERROR]\033[0m Check your out-marker: -o (end in seconds)\n\nTo see the help page type ./medley -h\n\n");
+                    printf("\033[0;31m[ERROR]\033[0m Check your duration: -d (duration in seconds)\n\nTo see the help page type ./medley -h\n\n");
                     return 1;
                 }
                 break;
@@ -188,18 +189,10 @@ int main(int argc, char **argv)
         }
     }
 
-    // Check in and out marker
-    if ((float)iflag >= (float)oflag)
-    {   
-        printf("\nin: %f - out: %f",(float)iflag, (float)oflag);
-        printf("\033[0;31m[ERROR]\033[0m In marker (%.2f seconds) must be located before out marker (%.2f seconds)\n\nTo see the help page type ./medley -h\n\n", iflag, oflag);
-        return 1;
-    }
-
     // Check crossfade length
-    if ((float)xflag > (float)(oflag - iflag) / 2)
+    if (xflag > dflag / 2)
     {
-        printf("\033[0;31m[ERROR]\033[0m Your crossfade (%.2f seconds) is too long for the specified duration of %.2f seconds\n\nTo see the help page type ./medley -h\n\n", xflag, oflag - iflag);
+        printf("\033[0;31m[ERROR]\033[0m Your crossfade (%.2f seconds) is too long for the specified duration of %.2f seconds\n\nTo see the help page type ./medley -h\n\n", xflag, dflag);
         return 1;
     }
 
@@ -337,20 +330,6 @@ int main(int argc, char **argv)
 // R E A D I N G   T R A C K S
 // Adding tracks to playlist, track by track, store in RAM
 // ----------------------------------------------------------
-
-
-    // DEBUG
-    printf("\n\nORDER 1:\n");
-    Track *temp1 = playlist;
-    while (temp1 != NULL)
-    {
-        if (temp1->name != NULL)
-            printf("No %i: %s | prev: %s | next: %s\n", temp1->track_number, temp1->name, temp1->prev == NULL?"NULL":temp1->prev->name, temp1->next == NULL?"NULL":temp1->next->name);
-        else
-            printf("No Name\n");
-        temp1 = temp1->next;
-    }
-    printf("\n\n");
 
 
     // Play (aka loop) playlist, start at track number 1
@@ -501,19 +480,11 @@ int main(int argc, char **argv)
                     // Calculate duration in seconds
                     play->duration = (float) play->data.ckSize * 8 / (play->fmt.nChannels * play->fmt.nSamplesPerSec * play->fmt.wBitsPerSample);
 
-                    if (play->duration < oflag)
-                    {
-                        printf("\033[0;33m[SKIPPED]\033[0m Track duration (%.2f seconds) too short for out marker (%.2f seconds)\n", play->duration, oflag);
-                        skipFlag = 1;
-                        break;
-                    }
-
                     // Calculate globals as first valid track is found (i.e. valid fmt chunk and valid data chunk)
                     if (track_count == 0)
                     {
                         samples_in = iflag * output->fmt.nSamplesPerSec;
-                        samples_out = oflag * output->fmt.nSamplesPerSec;
-                        samples_track = samples_out - samples_in;
+                        samples_part = dflag * output->fmt.nSamplesPerSec;
                         samples_fade = xflag * output->fmt.nSamplesPerSec;
                     }
 
@@ -624,21 +595,6 @@ int main(int argc, char **argv)
         return 3;
     }
 
-
-    // DEBUG
-    printf("\n\nORDER 2:\n");
-    Track *temp2 = playlist;
-    while (temp2 != NULL)
-    {
-        if (temp2->name != NULL)
-            printf("No %i: %s | prev: %s | next: %s\n", temp2->track_number, temp2->name, temp2->prev == NULL?"NULL":temp2->prev->name, temp2->next == NULL?"NULL":temp2->next->name);
-        else
-            printf("No Name\n");
-        temp2 = temp2->next;
-    }
-    printf("\n\n");
-
-
     // Renumber tracks after removing invalid tracks
     number_tracks(playlist);
 
@@ -652,15 +608,16 @@ int main(int argc, char **argv)
 // Reading of playlist is done, start writing to output file
 // ----------------------------------------------------------
 
-
-    // Set name (optional)
-    output->name = wflag;
+    printf("\n\nCreating medley from %i audio files:\n",  track_count);
+    printf("\n0%%                  50%%                100%%");
+    printf("\n┣━━━━━━━━━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━┫");
+    printf("\n ");
 
     // Data chunk: Set Id
     output->data.ckID = DATA;
 
     // Data chunk: Calculate raw audio size -> samples out = n * length - (n - 1) * fade
-    output->data.ckSize = ((track_count * samples_track) - (track_count - 1) * samples_fade) * output->fmt.nBlockAlign;
+    output->data.ckSize = ((track_count * samples_part) - (track_count - 1) * samples_fade) * output->fmt.nBlockAlign;
 
     // RIFF chunk: Copy from Playlist
     output->riff = playlist->riff;
@@ -670,6 +627,12 @@ int main(int argc, char **argv)
 
     // RIFF chunk: Calculate filesize -> 36 + output->data.ckSize;
     output->riff.ckSize = sizeof(WAVE) + sizeof(RIFF) + 4 + output->fmt.ckSize + sizeof(DATA) + 4 + output->data.ckSize;
+
+    // Set name (optional)
+    output->name = wflag;
+
+    // Set duration
+    output->duration = (float) output->data.ckSize * 8 / (output->fmt.nChannels * output->fmt.nSamplesPerSec * output->fmt.wBitsPerSample);
 
     // Open Output file for writing
     output->audiofile = fopen(output->name, "w");
@@ -689,67 +652,118 @@ int main(int argc, char **argv)
     fwrite(&output->data, sizeof(DataChunk), 1, output->audiofile);
 
     // Transfer one frame (bit depth * channel) from audiofile -> writefile
-    int16_t transfer_main;
-    int16_t transfer_fade;
+    int16_t transfer_main[output->fmt.nChannels];
+    int16_t transfer_fade[output->fmt.nChannels];
 
     // Read raw audio from playlist
     Track *copy = playlist;
+    
+    // Total samples and count of medley for process bar
+    long total = output->data.ckSize / output->fmt.nBlockAlign;
+    long total_count = 0;
+    int total_division = 40;
+    int total_process = 0;
+
+    // Loop thru playlist and copy audio data to output
     while (copy != NULL)
     {
         
-        for (int i = 0; i < samples_track * output->fmt.nChannels; i++)
+        for (long i = 0; i < samples_part; i++)
         {
             // Skip fade in on all but first track
             if (copy->track_number > 1 && i == 0)
             {
-                i += samples_fade * output->fmt.nChannels;
+                i += samples_fade;
             }
             // FADE IN
-            if (i < samples_fade * output->fmt.nChannels)
+            if (i < samples_fade)
             {
-                fread(&transfer_main, output->fmt.wBitsPerSample / 8, 1, copy->audiofile);
-                // printf("\n%i / %i : %i @ %i IN ", i, samples_track, copy->track_number, copy->sample_count);
-                copy->sample_count++;
+                fread(&transfer_main, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, copy->audiofile);
+
+                for (int j = 0; j < output->fmt.nChannels; j++)
+                {
+                    // Linear Fade In
+                    // transfer_main[j] = transfer_main[j] * (float)i / samples_fade;
+
+                    // Squareroot Fade In
+                    transfer_main[j] = transfer_main[j] * sqrt((float)i / samples_fade);
+                }
+
+                // DEBUG
+                // printf("\n[%li] %li / %li : %i @ %li IN ", total_count, i, samples_part, copy->track_number, copy->sample_count);
             }
-            else if (i > (samples_track - samples_fade) * output->fmt.nChannels)
+            else if (i > samples_part - samples_fade)
             {
                 // CROSSFADE
                 if (copy->next != NULL)
                 {
-                    fread(&transfer_main, output->fmt.wBitsPerSample / 8, 1, copy->audiofile);
-                    fread(&transfer_fade, output->fmt.wBitsPerSample / 8, 1, copy->next->audiofile);
-                    // printf("\n%i / %i : %i @ %i XX %i @ %i", i, samples_track, copy->track_number, copy->sample_count, copy->next->track_number, copy->next->sample_count);
+                    fread(&transfer_main, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, copy->audiofile);
+                    fread(&transfer_fade, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, copy->next->audiofile);
 
-                    // Add samples Byte wise
-                    transfer_main = transfer_main * 0.5 + transfer_fade * 0.5;
+                    for (int j = 0; j < output->fmt.nChannels; j++)
+                    {
+                        // Linear cross fade
+                        // transfer_main[j] = transfer_main[j] * (1 - (float)(i - samples_part + samples_fade) / samples_fade);
+                        // transfer_fade[j] = transfer_fade[j] * (float)(i - samples_part + samples_fade) / samples_fade;
 
-                    copy->sample_count++;
+                        // Squareroot fade out
+                        transfer_main[j] = transfer_main[j] * sqrt(1 - (float)(i - samples_part + samples_fade) / samples_fade);
+                        transfer_fade[j] = transfer_fade[j] * sqrt((float)(i - samples_part + samples_fade) / samples_fade);
+
+                        // Summing
+                        transfer_main[j] = transfer_main[j] + transfer_fade[j];
+                    }
+
+                    // DEBUG
+                    // printf("\n[%li] %li / %li : %i @ %li XX %i @ %li", total_count, i, samples_part, copy->track_number, copy->sample_count, copy->next->track_number, copy->next->sample_count);
+
+                    // Forward X-fade file
                     copy->next->sample_count++;
                 }
                 // FADE OUT
                 else
                 {
-                    fread(&transfer_main, output->fmt.wBitsPerSample / 8, 1, copy->audiofile);
-                    // printf("\n%i / %i : %i @ %i OUT", i, samples_track, copy->track_number, copy->sample_count);
-                    copy->sample_count++;
+                    fread(&transfer_main, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, copy->audiofile);
+
+                    for (int j = 0; j < output->fmt.nChannels; j++)
+                    {
+                        // Linear fade out
+                        // transfer_main[j] = transfer_main[j] * (1 - (float)(i - samples_part + samples_fade) / samples_fade);
+
+                        // Squareroot fade out
+                        transfer_main[j] = transfer_main[j] * sqrt(1 - (float)(i - samples_part + samples_fade) / samples_fade);
+                    }
+
+                    // DEBUG
+                    // printf("\n[%li of %li] %li / %li : %i @ %li OUT", total_count, total, i, samples_part, copy->track_number, copy->sample_count);
                 }
             }
             // SOLO TRACK
             else
             {
-                fread(&transfer_main, output->fmt.wBitsPerSample / 8, 1, copy->audiofile);
-                // printf("\n%i / %i : %i @ %i --", i, samples_track, copy->track_number, copy->sample_count);
-                copy->sample_count++;
+                fread(&transfer_main, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, copy->audiofile);
+
+                // DEBUG
+                // printf("\n[%li] %li / %li : %i @ %li --", total_count, i, samples_part, copy->track_number, copy->sample_count);
             }
 
-            fwrite(&transfer_main, output->fmt.wBitsPerSample / 8, 1, output->audiofile);
+            fwrite(&transfer_main, output->fmt.wBitsPerSample / 8, output->fmt.nChannels, output->audiofile);
 
+            copy->sample_count++;
+            total_count++;
+
+            // Process bar
+            if (total_count > (total / total_division) * total_process)
+            {
+                total_process++;
+                printf("█");
+                fflush(stdout);
+            }
         }
         copy = copy->next;
     }
 
-    // Free transfer_main frame
-    // free(transfer_main);
+    printf("\n\nEnjoy your %.0f second \033[0;31mm\033[0;32me\033[0;34md\033[0;36ml\033[0;35me\033[0;33my\033[0m: ./%s\n\n", output->duration, wflag);
 
     // Close output file
     fclose(output->audiofile);
@@ -772,6 +786,7 @@ int main(int argc, char **argv)
 // Print welcome message
 void print_welcome()
 {
+    printf("\e[1;1H\e[2J"); // Clear console for most platforms
     printf("\n.---------------.\n");
     printf(  "| \033[0;31mm\033[0;32me\033[0;34md\033[0;36ml\033[0;35me\033[0;33my\033[0m v1.0.0 |\n");
     printf(  "'---------------'\n");
@@ -819,6 +834,23 @@ void number_tracks(Track *playlist)
         number++;
         search = search->next;
     }
+}
+
+
+// DEBUG: Print order of playlist
+void print_order(Track *playlist)
+{
+    printf("\n\nORDER 1:\n");
+    Track *temp = playlist;
+    while (temp != NULL)
+    {
+        if (temp->name != NULL)
+            printf("No %i: %s | prev: %s | next: %s\n", temp->track_number, temp->name, temp->prev == NULL?"NULL":temp->prev->name, temp->next == NULL?"NULL":temp->next->name);
+        else
+            printf("No Name\n");
+        temp = temp->next;
+    }
+    printf("\n\n");
 }
 
 
