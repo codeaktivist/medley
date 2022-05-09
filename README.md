@@ -9,21 +9,17 @@ This little tools grabs a part of every audio track it finds and merges them int
 
 ## How to install
 
-Download the distribution from here or type
-
+Download the distribution from here or type:\
 ```wget asdfasdf```
 
-Unzip the distribution zip file:
-
+Unzip the distribution zip file:\
 ```unzip distro.zip```
 
-Compile from source using make or your own favorite compiler:
-
+Compile from source using make or your own favorite compiler:\
 ```make asdfasdf```
 
-Run the program
-
-```./medley dir-with-songs```
+Run the program:\
+```./medley dir-with-songs/```
 
 ## Usage
 
@@ -53,11 +49,9 @@ Parameters are optional. If not specified via the respective flag, default value
 Take all wav files in the folder beatles and create the medley beatles.wav with 10 Seconds (0:40 to 0:50) from each song using 1 second to blend between them.
 
 ```./medley /slipknot -i 0 -d 10 -x 0```
-
 Take any .wav file in the slipknot folder and generate a medley.wav made up of the first 10 seconds of every song.
 
 ```./medley /coldplay -f elevator.wav -i 40 -d 20 -x 10```
-
 Produce some everblending elevator music ;P
 
 ### Remarks
@@ -88,9 +82,11 @@ tl;dr: Use 16 bit standard wave files, mono or stereo
 
 ## Return codes / error codes
 
-0: Success
-1: Wrong user input
-2: Failed to allocate memory
-3: File not found
-4: Error or file corruption in read
-5: Error or file corruption in write
+0: Success\
+1: Wrong user input\
+2: Failed to allocate memory\
+3: File not found\
+4: Error or file corruption in read\
+5: Error or file corruption in write\
+
+Feel free to try, fork, improve :heart:

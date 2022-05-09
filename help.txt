@@ -1,0 +1,46 @@
+Pick a folder with wav audio files and let this C program
+merge all tracks into a medley. To generate your medley,
+the program takes some optional parameters:
+
+┏━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Parameter ┃ Flag ┃ Default    ┃ Description                ┃
+┣━━━━━━━━━━━╋━━━━━━╋━━━━━━━━━━━━╋━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
+┃ location  ┃ -r   ┃ audio      ┃ read source directory      ┃
+┃ file      ┃ -w   ┃ medley.wav ┃ write to output file       ┃
+┃ in        ┃ -i   ┃ 1          ┃ in-marker in seconds       ┃
+┃ duration  ┃ -d   ┃ 2          ┃ duration in seconds        ┃
+┃ x-fade    ┃ -x   ┃ 0.5        ┃ x-fade duration in seconds ┃
+┗━━━━━━━━━━━┻━━━━━━┻━━━━━━━━━━━━┻━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+EXAMPLES
+
+./medley -r /beatles -w beatles.wav -i 40 -d 10 -x 1
+Take all wav files in the folder beatles and create the medley
+beatles.wav with 10 Seconds (0:40 to 0:50) from each song
+using 1 second to blend between them.
+
+./medley /slipknot -i 0 -d 10 -x 0
+Take any .wav file in the slipknot folder and generate a 
+medley.wav made up of the first 10 seconds of every song.
+
+./medley /coldplay -f elevator.wav -i 40 -d 20 -x 10
+Produce some everblending elevator music ;P
+
+REMARKS
+
+The length specified for the crossfade will also be used
+for the fade in (first track) and the fade out (last track).
+Explicitly setting the crossfade duration to 0 will result 
+in a hard and audible cut. A minimum length of 0.1 is 
+recommended (100ms). The crossfade cannot be longer than 
+the part or the actual song, so a 5 second crossfade on a 
+8 second part will result in an error.
+
+LIMITATIONS
+
+- Only uncompressed wave files are supported (.wav, .wave, .bwf)
+- Only mono and stereo files are supported
+- All files must have the same number of channel
+- All files must have the same sample frequency (44.1kHz, 48kHz)
+- Only 16 bit files are supported
+ 
