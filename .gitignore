@@ -66,6 +66,8 @@ audio/
 *.bwf
 *.pkf
 
+!/audio
+
 # Ignore Temp Folder
 test/
 .DS_Store

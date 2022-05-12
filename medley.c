@@ -492,6 +492,15 @@ int main(int argc, char **argv)
                     // Calculate trackDuration in seconds
                     play->trackDuration = (float) play->data.ckSize * 8 / (play->fmt.nChannels * play->fmt.nSamplesPerSec * play->fmt.wBitsPerSample);
 
+                    // Check for in-mark within track duration
+                    if (iflag > play->trackDuration)
+                    {
+                        printf("\033[0;31m[ERROR]\033[0m In-marker (%.2f) outside of track (%.2f)\n", iflag, play->trackDuration);
+                        // printf("\033[0;31m[ERROR]\033[0m In-marker %s\n", play->path);
+                        skipFlag = 1;
+                        break;
+                    }
+
                     // Calculate globals as first valid track is found (i.e. valid fmt chunk and valid data chunk)
                     if (trackCount == 0)
                     {
@@ -604,7 +613,7 @@ int main(int argc, char **argv)
     // Handle corner case: No valid audio files found
     if (playlist == NULL)
     {
-        printf("\033[0;31m[ERROR]\033[0m No valid audio files present at: %s\n\n", rflag);
+        printf("\033[0;31m[ERROR]\033[0m No audio files added from directory %s\n\n", rflag);
         free(output);
         closedir(dir);
         return 3;
