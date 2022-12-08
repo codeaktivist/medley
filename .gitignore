@@ -71,6 +71,7 @@ audio/
 # Ignore Temp Folder
 test/
 .DS_Store
+notes.txt
 
 # VS Code
 .vscode/

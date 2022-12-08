@@ -2,6 +2,9 @@
 
 Pick a folder with wav audio files and let this C program merge all tracks into a medley.
 
+## Video Demo
+tbd
+
 ## Description
 
 A medley lets you enjoy the best parts of a few songs (very often three) in one peace. Wouldn't it be nice to have a medley for every album you wanted to listen to? ... to know what it sounds like? ... to remember it by?
@@ -10,13 +13,13 @@ This little tools grabs a part of every audio track it finds and merges them int
 ## How to install
 
 Download the distribution from here or type:\
-```wget asdfasdf```
+```wget https://github.com/codeaktivist/medley/archive/refs/tags/v1.0.0.zip```
 
 Unzip the distribution zip file:\
-```unzip distro.zip```
+```unzip v1.0.0.zip```
 
 Compile from source using make or your own favorite compiler:\
-```make asdfasdf```
+```make medley```
 
 Run the program:\
 ```./medley dir-with-songs/```
