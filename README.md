@@ -3,7 +3,7 @@
 Pick a folder with wav audio files and let this C program merge all tracks into a medley.
 
 ## Video Demo
-tbd
+https://www.youtube.com/watch?v=MqoZwhuiSCY
 
 ## Description
 
